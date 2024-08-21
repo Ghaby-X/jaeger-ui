@@ -21,7 +21,7 @@ import _isEmpty from 'lodash/isEmpty';
 import { Field, formValueSelector, InjectedFormProps, reduxForm } from 'redux-form';
 // @ts-ignore
 import store from 'store';
-import { connect } from 'react-redux';
+import { connect, useDispatch, useSelector } from 'react-redux';
 import { bindActionCreators, Dispatch } from 'redux';
 import { Link } from 'react-router-dom';
 import reduxFormFieldAdapter from '../../../utils/redux-form-field-adapter';
@@ -146,73 +146,52 @@ const convertServiceErrorRateToPercentages = (serviceErrorRate: null | ServiceMe
 type TPropsWithInjectedFormProps = TProps & InjectedFormProps<object, TProps>;
 
 // export for tests
-export class MonitorATMServicesViewImpl extends React.PureComponent<TPropsWithInjectedFormProps, StateType> {
-  docsLink: string;
-  graphDivWrapper: React.RefObject<HTMLInputElement>;
-  serviceSelectorValue = '';
-  endTime: number = Date.now();
-  state = {
-    graphWidth: 300,
-    serviceOpsMetrics: undefined,
-    searchOps: '',
-    graphXDomain: [],
-  };
+export const MonitorATMServicesViewImpl: React.FC<TPropsWithInjectedFormProps> = (props) => {
+  const [graphWidth, setGraphWidth] = React.useState(300)
+  const [serviceOpsMetrics, setServiceOpsMetrics] = React.useState<ServiceOpsMetrics[] | undefined>(undefined)
+  const [searchOps, setSearchOps] = React.useState('')
+  const [graphXDomain, setGraphXDomain] = React.useState<number[]>([])
+  const docsLink = getConfigValue('monitor.docsLink')
+  const graphDivWrapper = React.useRef<HTMLDivElement>(null)
+  const serviceSelectorValue = ''
+  let endTime = Date.now()
 
-  constructor(props: TPropsWithInjectedFormProps) {
-    super(props);
-    this.graphDivWrapper = React.createRef();
-    this.docsLink = getConfigValue('monitor.docsLink');
-  }
+  const services = useSelector((state: any) => state.servies)
+  const dispatch = useDispatch()
+  const { selectedService, selectedSpanKind, selectedTimeFrame, metrics, servicesLoading } = props;
 
-  componentDidMount() {
-    const { fetchServices, services } = this.props;
-    fetchServices();
+  React.useEffect(() => {
+    const { fetchServices } = props
+    dispatch(fetchServices())
     if (services.length !== 0) {
-      this.fetchMetrics();
+      fetchMetrics();
     }
-    window.addEventListener('resize', this.updateDimensions.bind(this));
-    this.updateDimensions.apply(this);
-    this.calcGraphXDomain();
-  }
+    window.addEventListener('resize', updateDimensions);
+    calcGraphXDomain();
 
-  componentDidUpdate(prevProps: TProps) {
-    const { selectedService, selectedSpanKind, selectedTimeFrame, services } = this.props;
+    return () => window.removeEventListener('resize', updateDimensions)
+  }, [])
+ 
+  React.useEffect(() => {
+    fetchMetrics()
+  }, [selectedService, selectedSpanKind, selectedTimeFrame, services])
 
-    if (
-      prevProps.selectedService !== selectedService ||
-      prevProps.selectedSpanKind !== selectedSpanKind ||
-      prevProps.selectedTimeFrame !== selectedTimeFrame
-    ) {
-      this.fetchMetrics();
-    } else if (!_isEqual(prevProps.services, services)) {
-      this.fetchMetrics();
-    }
+  React.useEffect(() => {
+    calcGraphXDomain()
+  }, [selectedTimeFrame])
 
-    if (prevProps.selectedTimeFrame !== this.props.selectedTimeFrame) {
-      this.calcGraphXDomain();
-    }
-  }
-
-  componentWillUnmount() {
-    window.removeEventListener('resize', this.updateDimensions.bind(this));
-  }
-
-  calcGraphXDomain() {
+  const calcGraphXDomain = () => {
     const currentTime = Date.now();
-    this.setState({
-      graphXDomain: [currentTime - this.props.selectedTimeFrame, currentTime],
-    });
+    setGraphXDomain([currentTime - selectedTimeFrame, currentTime])
   }
 
-  updateDimensions() {
-    if (this.graphDivWrapper.current) {
-      this.setState({
-        graphWidth: this.graphDivWrapper.current.offsetWidth - 24,
-      });
+  const updateDimensions = () => {
+    if (graphDivWrapper.current) {
+      setGraphWidth(graphDivWrapper.current.offsetWidth - 24)
     }
   }
 
-  fetchMetrics() {
+  const fetchMetrics = () => {
     const {
       selectedService,
       selectedSpanKind,
@@ -220,18 +199,18 @@ export class MonitorATMServicesViewImpl extends React.PureComponent<TPropsWithIn
       fetchAllServiceMetrics,
       fetchAggregatedServiceMetrics,
       services,
-    } = this.props;
+    } = props;
     const currentService = selectedService || services[0];
 
     if (currentService) {
-      this.endTime = Date.now();
+      endTime = Date.now();
       store.set('lastAtmSearchSpanKind', selectedSpanKind);
       store.set('lastAtmSearchTimeframe', selectedTimeFrame);
-      store.set('lastAtmSearchService', this.getSelectedService());
+      store.set('lastAtmSearchService', getSelectedService());
 
       const metricQueryPayload = {
         quantile: 0.95,
-        endTs: this.endTime,
+        endTs: endTime,
         lookback: selectedTimeFrame,
         step: 60 * 1000,
         ratePer: 10 * 60 * 1000,
@@ -241,17 +220,16 @@ export class MonitorATMServicesViewImpl extends React.PureComponent<TPropsWithIn
       fetchAllServiceMetrics(currentService, metricQueryPayload);
       fetchAggregatedServiceMetrics(currentService, metricQueryPayload);
 
-      this.setState({ serviceOpsMetrics: undefined, searchOps: '' });
+      setServiceOpsMetrics(undefined)
+      setSearchOps('')
     }
   }
 
-  getSelectedService() {
-    const { selectedService, services } = this.props;
+  const getSelectedService = () => {
+    const { selectedService, services } = props;
     return selectedService || store.get('lastAtmSearchService') || services[0];
   }
-
-  render() {
-    const { services, metrics, selectedSpanKind, selectedTimeFrame, servicesLoading } = this.props;
+    
     const serviceLatencies = metrics.serviceMetrics ? metrics.serviceMetrics.service_latencies : null;
     const displayTimeUnit = calcDisplayTimeUnit(serviceLatencies);
     const serviceErrorRate = metrics.serviceMetrics ? metrics.serviceMetrics.service_error_rate : null;
@@ -271,7 +249,7 @@ export class MonitorATMServicesViewImpl extends React.PureComponent<TPropsWithIn
             message={
               <>
                 No data yet! Please see these
-                <Link to={{ pathname: this.docsLink }} target="_blank">
+                <Link to={{ pathname: docsLink }} target="_blank">
                   &nbsp;instructions&nbsp;
                 </Link>
                 on how to set up your span metrics.
@@ -292,7 +270,7 @@ export class MonitorATMServicesViewImpl extends React.PureComponent<TPropsWithIn
                 placeholder="Select A Service"
                 props={{
                   className: 'select-a-service-input',
-                  value: this.getSelectedService(),
+                  value: getSelectedService(),
                   disabled: metrics.operationMetricsLoading,
                   loading: metrics.operationMetricsLoading,
                 }}
@@ -333,12 +311,12 @@ export class MonitorATMServicesViewImpl extends React.PureComponent<TPropsWithIn
           <Row align="middle">
             <Col span={16}>
               <p className="operations-metrics-text">
-                Aggregation of all &quot;{this.getSelectedService()}&quot; metrics in selected timeframe.{' '}
+                Aggregation of all &quot;{getSelectedService()}&quot; metrics in selected timeframe.{' '}
                 <a
                   href={prefixUrl(
                     `/search?end=${Date.now()}000&limit=20&lookback=${
                       selectedTimeFrame / (3600 * 1000)
-                    }h&maxDuration&minDuration&service=${this.getSelectedService()}&start=${
+                    }h&maxDuration&minDuration&service=${getSelectedService()}&start=${
                       Date.now() - selectedTimeFrame
                     }000`
                   )}
@@ -376,7 +354,7 @@ export class MonitorATMServicesViewImpl extends React.PureComponent<TPropsWithIn
           </Row>
           <Row>
             <Col span={8}>
-              <div ref={this.graphDivWrapper} />
+              <div ref={graphDivWrapper} />
               <ServiceGraph
                 key="latency"
                 error={
@@ -386,13 +364,13 @@ export class MonitorATMServicesViewImpl extends React.PureComponent<TPropsWithIn
                 }
                 loading={metrics.loading}
                 name={`Latency (${convertTimeUnitToShortTerm(displayTimeUnit)})`}
-                width={this.state.graphWidth}
+                width={graphWidth}
                 metricsData={serviceLatencies}
                 showLegend
                 marginClassName="latency-margins"
                 showHorizontalLines
                 yAxisTickFormat={timeInMs => yAxisTickFormat(timeInMs, displayTimeUnit)}
-                xDomain={this.state.graphXDomain}
+                xDomain={graphXDomain}
               />
             </Col>
             <Col span={8}>
@@ -401,12 +379,12 @@ export class MonitorATMServicesViewImpl extends React.PureComponent<TPropsWithIn
                 error={metrics.serviceError.service_error_rate}
                 loading={metrics.loading}
                 name="Error rate (%)"
-                width={this.state.graphWidth}
+                width={graphWidth}
                 metricsData={convertServiceErrorRateToPercentages(serviceErrorRate)}
                 marginClassName="error-rate-margins"
                 color="#CD513A"
                 yDomain={[0, 100]}
-                xDomain={this.state.graphXDomain}
+                xDomain={graphXDomain}
               />
             </Col>
             <Col span={8}>
@@ -415,35 +393,33 @@ export class MonitorATMServicesViewImpl extends React.PureComponent<TPropsWithIn
                 loading={metrics.loading}
                 error={metrics.serviceError.service_call_rate}
                 name="Request rate (req/s)"
-                width={this.state.graphWidth}
+                width={graphWidth}
                 metricsData={metrics.serviceMetrics ? metrics.serviceMetrics.service_call_rate : null}
                 showHorizontalLines
                 color="#4795BA"
                 marginClassName="request-margins"
-                xDomain={this.state.graphXDomain}
+                xDomain={graphXDomain}
               />
             </Col>
           </Row>
           <Row className="operation-table-block">
             <Col span={16}>
-              <h2 className="table-header">Operations metrics under {this.getSelectedService()}</h2>{' '}
+              <h2 className="table-header">Operations metrics under {getSelectedService()}</h2>{' '}
               <span className="over-the-last">Over the {getLoopbackInterval(selectedTimeFrame)}</span>
             </Col>
             <Col span={8} className="select-operation-column">
               <Search
                 placeholder="Search operation"
                 className="select-operation-input"
-                value={this.state.searchOps}
+                value={searchOps}
                 disabled={metrics.operationMetricsLoading === true || metrics.serviceOpsMetrics === undefined}
                 onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
                   const filteredData = metrics.serviceOpsMetrics!.filter(({ name }: { name: string }) => {
                     return name.toLowerCase().includes(e.target.value.toLowerCase());
                   });
 
-                  this.setState({
-                    searchOps: e.target.value,
-                    serviceOpsMetrics: filteredData,
-                  });
+                  setSearchOps(e.target.value)
+                  setServiceOpsMetrics(filteredData)
 
                   trackSearchOperationDebounced(e.target.value);
                 }}
@@ -455,19 +431,18 @@ export class MonitorATMServicesViewImpl extends React.PureComponent<TPropsWithIn
               loading={metrics.operationMetricsLoading}
               error={metrics.opsError}
               data={
-                this.state.serviceOpsMetrics === undefined
+                serviceOpsMetrics === undefined
                   ? metrics.serviceOpsMetrics
-                  : this.state.serviceOpsMetrics
+                  : serviceOpsMetrics
               }
-              endTime={this.endTime}
+              endTime={endTime}
               lookback={selectedTimeFrame}
-              serviceName={this.getSelectedService()}
+              serviceName={getSelectedService()}
             />
           </Row>
         </div>
       </>
     );
-  }
 }
 
 export function mapStateToProps(state: ReduxState): TReduxProps {
